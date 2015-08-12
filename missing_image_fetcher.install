@@ -1,0 +1,9 @@
+<?php
+
+/**
+ * Implements hook_uninstall().
+ */
+function missing_image_fetcher_uninstall() {
+  variable_del('missing_image_fetcher_location_public');
+  variable_del('missing_image_fetcher_downloader_public');
+}

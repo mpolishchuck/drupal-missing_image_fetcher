@@ -1,0 +1,152 @@
+<?php
+
+/**
+ * Implements hook_menu().
+ */
+function missing_image_fetcher_menu() {
+  $items['admin/config/development/missing-image-fetcher'] = array(
+    'title' => 'Missing image fetcher',
+    'description' => 'Configure sources for missing image fetcher',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('missing_image_fetcher_config'),
+    'access arguments' => array('administer site configuration'),
+    'type' => MENU_NORMAL_ITEM,
+    'file' => 'missing_image_fetcher.admin.inc',
+  );
+
+  return $items;
+}
+
+/**
+ * Implements hook_menu_alter().
+ */
+function missing_image_fetcher_menu_alter(&$items) {
+
+  foreach (missing_image_fetcher_get_locations() as $schema => $location) {
+
+    /**
+     * @var DrupalLocalStreamWrapper $schema_wrapper
+     */
+    $schema_wrapper = file_stream_wrapper_get_instance_by_scheme($schema);
+
+    $directory_path = $schema_wrapper->getDirectoryPath();
+
+    if (empty($items[$directory_path . '/styles/%image_style'])) {
+      continue;
+    }
+
+    $items[$directory_path . '/styles/%image_style']['page callback'] = 'missing_image_fetcher_image_style_deliver';
+  }
+}
+
+function missing_image_fetcher_get_locations() {
+  $locations = array();
+
+  $location_public = variable_get('missing_image_fetcher_location_public');
+  if ($location_public) {
+    $location_public = rtrim($location_public, '/') . '/';
+    $locations['public'] = $location_public;
+  }
+
+  return $locations;
+}
+
+function missing_image_fetcher_image_style_deliver($style, $scheme) {
+  // private:// files are handled as previously
+  if ($scheme == 'private') {
+    return call_user_func_array('image_style_deliver', func_get_args());
+  }
+
+  $args = func_get_args();
+  array_shift($args);
+  array_shift($args);
+  $target = implode('/', $args);
+
+  $valid = !empty($style) && file_stream_wrapper_valid_scheme($scheme);
+  if (!variable_get('image_allow_insecure_derivatives', FALSE) || strpos(ltrim($target, '\/'), 'styles/') === 0) {
+    $valid = $valid && isset($_GET[IMAGE_DERIVATIVE_TOKEN]) && $_GET[IMAGE_DERIVATIVE_TOKEN] === image_style_path_token($style['name'], $scheme . '://' . $target);
+  }
+  if (!$valid) {
+    return MENU_ACCESS_DENIED;
+  }
+
+  $image_uri = $scheme . '://' . $target;
+
+  if (!is_file($image_uri)) {
+    $lock_name = 'image_style_deliver:' . $style['name'] . ':' . drupal_hash_base64($image_uri);
+    $lock_acquired = lock_acquire($lock_name);
+    if (!$lock_acquired) {
+      return call_user_func_array('image_style_deliver', func_get_args());
+    }
+
+    $remote_uri = missing_image_fetcher_get_remote_uri($image_uri);
+    if ($remote_uri) {
+      $dir_uri = dirname($image_uri);
+      file_prepare_directory($dir_uri, FILE_CREATE_DIRECTORY | FILE_MODIFY_PERMISSIONS);
+      missing_image_fetcher_download_file($scheme, $remote_uri, $image_uri);
+    }
+
+    lock_release($lock_name);
+  }
+
+  return call_user_func_array('image_style_deliver', func_get_args());
+}
+
+function missing_image_fetcher_get_remote_uri($image_uri) {
+  if (($pos = strpos($image_uri, '://')) === FALSE) {
+    return NULL;
+  }
+
+  $schema = substr($image_uri, 0, $pos);
+  $path = substr($image_uri, $pos + 3);
+
+  $locations = missing_image_fetcher_get_locations();
+  if (empty($locations[$schema])) {
+    return NULL;
+  }
+
+  return $locations[$schema] . $path;
+}
+
+function missing_image_fetcher_download_file($scheme, $remote_uri, $destination_uri) {
+  $downloader = variable_get('missing_image_fetcher_downloader_' . $scheme, 'default');
+  $function = 'missing_image_fetcher_download_file_' . $downloader;
+
+  if (function_exists($function)) {
+    call_user_func($function, $scheme, $remote_uri, $destination_uri);
+  }
+  else {
+    @copy($remote_uri, $destination_uri);
+  }
+}
+
+function missing_image_fetcher_download_file_curl_basic($scheme, $remote_uri, $destination_uri) {
+  $fp = fopen(drupal_realpath($destination_uri), 'w');
+  $ch = curl_init();
+  curl_setopt($ch, CURLOPT_URL, $remote_uri);
+  curl_setopt($ch, CURLOPT_HTTPAUTH, CURLAUTH_BASIC);
+  curl_setopt($ch, CURLOPT_FILE, $fp);
+  curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+  curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+  curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+  curl_exec($ch);
+
+  if ($ch != null) curl_close($ch);
+  if ($fp != null) fclose($fp);
+}
+
+
+function missing_image_fetcher_download_file_curl_digest($scheme, $remote_uri, $destination_uri) {
+  $fp = fopen(drupal_realpath($destination_uri), 'w');
+  $ch = curl_init();
+  curl_setopt($ch, CURLOPT_URL, $remote_uri);
+  curl_setopt($ch, CURLOPT_HTTPAUTH, CURLAUTH_DIGEST);
+  curl_setopt($ch, CURLOPT_FILE, $fp);
+  curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+  curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+  curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+  curl_exec($ch);
+
+  if ($ch != null) curl_close($ch);
+  if ($fp != null) fclose($fp);
+}
