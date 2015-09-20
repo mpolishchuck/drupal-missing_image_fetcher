@@ -81,13 +81,8 @@ function missing_image_fetcher_image_style_deliver($style, $scheme) {
 
     $remote_uri = missing_image_fetcher_get_remote_uri($image_uri);
     if ($remote_uri) {
-      $dir_uri = dirname($image_uri);
-      /**
-       * For avoidance of putting the shit into Bobik
-       */
-      if ($dir_uri != $scheme . ':') {
-        file_prepare_directory($dir_uri, FILE_CREATE_DIRECTORY | FILE_MODIFY_PERMISSIONS);
-      }
+      $dir_uri = drupal_dirname($image_uri);
+      file_prepare_directory($dir_uri, FILE_CREATE_DIRECTORY | FILE_MODIFY_PERMISSIONS);
       missing_image_fetcher_download_file($scheme, $remote_uri, $image_uri);
     }
 
