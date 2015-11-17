@@ -2,7 +2,7 @@ name = "Missing Image Fetcher"
 description = "Downloads source images from production for styled images (public)"
 package = Development
 core = 7.x
-version = 7.x-0.02
+version = 7.x-0.03
 
 configure = admin/config/development/missing-image-fetcher
 

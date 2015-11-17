@@ -72,20 +72,24 @@ function missing_image_fetcher_image_style_deliver($style, $scheme) {
 
   $image_uri = $scheme . '://' . $target;
 
+  $lock_name = 'missing_image_fetcher_download:' . drupal_hash_base64($image_uri);
   if (!is_file($image_uri)) {
-    $lock_name = 'image_style_deliver:' . $style['name'] . ':' . drupal_hash_base64($image_uri);
     $lock_acquired = lock_acquire($lock_name);
     if (!$lock_acquired) {
       return call_user_func_array('image_style_deliver', func_get_args());
     }
+  }
 
+  if (!is_file($image_uri)) {
     $remote_uri = missing_image_fetcher_get_remote_uri($image_uri);
     if ($remote_uri) {
       $dir_uri = drupal_dirname($image_uri);
       file_prepare_directory($dir_uri, FILE_CREATE_DIRECTORY | FILE_MODIFY_PERMISSIONS);
       missing_image_fetcher_download_file($scheme, $remote_uri, $image_uri);
     }
+  }
 
+  if (!empty($lock_acquired)) {
     lock_release($lock_name);
   }
 
@@ -112,12 +116,16 @@ function missing_image_fetcher_download_file($scheme, $remote_uri, $destination_
   $downloader = variable_get('missing_image_fetcher_downloader_' . $scheme, 'default');
   $function = 'missing_image_fetcher_download_file_' . $downloader;
 
+  $tmp_uri = _missing_image_fetcher_generate_tmp_uri($destination_uri);
+
   if (function_exists($function)) {
-    call_user_func($function, $scheme, $remote_uri, $destination_uri);
+    call_user_func($function, $scheme, $remote_uri, $tmp_uri);
   }
   else {
-    @copy($remote_uri, $destination_uri);
+    @copy($remote_uri, $tmp_uri);
   }
+
+  @rename($tmp_uri, $destination_uri);
 }
 
 function missing_image_fetcher_download_file_curl_basic($scheme, $remote_uri, $destination_uri) {
@@ -149,4 +157,13 @@ function missing_image_fetcher_download_file_curl_digest($scheme, $remote_uri, $
 
   if ($ch != null) curl_close($ch);
   if ($fp != null) fclose($fp);
+}
+
+function _missing_image_fetcher_generate_tmp_uri($uri) {
+  $scheme = file_uri_scheme($uri);
+  $dir_uri = $scheme . '://_missing_image_fetcher';
+  file_prepare_directory($dir_uri, FILE_CREATE_DIRECTORY | FILE_MODIFY_PERMISSIONS);
+  $tmp_uri = $dir_uri . '/' . drupal_hash_base64($uri) . '.tmp';
+
+  return $tmp_uri;
 }
